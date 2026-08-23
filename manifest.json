@@ -1,0 +1,17 @@
+{
+  "name": "열매 블록 - 성령의 9가지 열매",
+  "short_name": "열매 블록",
+  "description": "갈라디아서 5:22-23 성령의 9가지 열매를 테마로 한 블록 퍼즐 게임",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#141B33",
+  "theme_color": "#1C2647",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
