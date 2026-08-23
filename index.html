@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>열매 블록 · 성령의 9가지 열매</title>
+<meta name="description" content="갈라디아서 5:22-23 성령의 9가지 열매를 테마로 한 블록 퍼즐 게임" />
+<style>
+  html, body { margin:0; padding:0; background:#141B33; }
+  * { box-sizing: border-box; }
+</style>
+
+<!-- Firebase (랭킹용) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<!-- React -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  /* ▼▼▼ 여기에 본인 Firebase 프로젝트 설정값을 넣어주세요 (Firebase 콘솔 > 프로젝트 설정 > 웹앱) ▼▼▼ */
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID",
+  };
+  /* ▲▲▲ ------------------------------------------------------------- ▲▲▲ */
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------- 성령의 아홉 가지 열매 (갈라디아서 5:22-23) ---------- */
+const FRUITS = [
+  { key: "love", name: "사랑", icon: "❤️", color: "#E4483A" },
+  { key: "joy", name: "희락", icon: "☀️", color: "#EE9A1D" },
+  { key: "peace", name: "화평", icon: "🕊️", color: "#2FA3D6" },
+  { key: "patience", name: "인내", icon: "⏳", color: "#F0763C" },
+  { key: "kindness", name: "자비", icon: "🤲", color: "#E6659A" },
+  { key: "goodness", name: "양선", icon: "🌱", color: "#4CAA5E" },
+  { key: "faithfulness", name: "충성", icon: "🛡️", color: "#5A6FC4" },
+  { key: "gentleness", name: "온유", icon: "🪶", color: "#2FB6A8" },
+  { key: "selfcontrol", name: "절제", icon: "⚖️", color: "#8B6FC7" },
+];
+
+const SUDOKU_URL = "https://reau5789-wq.github.io/fruit-sudoku/";
+const SCORES_COLLECTION = "fruit_block_scores";
+
+const SHAPES = [
+  [[0, 0]],
+  [[0, 0], [0, 1]],
+  [[0, 0], [1, 0]],
+  [[0, 0], [0, 1], [0, 2]],
+  [[0, 0], [1, 0], [2, 0]],
+  [[0, 0], [0, 1], [0, 2], [0, 3]],
+  [[0, 0], [1, 0], [2, 0], [3, 0]],
+  [[0, 0], [0, 1], [1, 0], [1, 1]],
+  [[0, 0], [0, 1], [0, 2], [1, 0]],
+  [[0, 0], [0, 1], [0, 2], [1, 2]],
+  [[0, 0], [1, 0], [1, 1], [1, 2]],
+  [[0, 2], [1, 0], [1, 1], [1, 2]],
+  [[0, 0], [0, 1], [1, 1], [1, 2]],
+  [[0, 1], [0, 2], [1, 0], [1, 1]],
+  [[0, 0], [0, 1], [0, 2], [1, 1]],
+  [[0, 1], [1, 0], [1, 1], [1, 2]],
+  [[0, 0], [1, 0], [1, 1], [2, 1]],
+  [[0, 1], [1, 0], [1, 1], [2, 0]],
+  [[0, 0], [0, 1], [1, 0], [2, 0]],
+  [[0, 1], [1, 1], [2, 0], [2, 1], [2, 2]],
+];
+
+const SIZE = 8;
+const CELL = 34;
+const GAP = 3;
+const STEP = CELL + GAP;
+const LIFT = 74;
+
+function randomShape() { return SHAPES[Math.floor(Math.random() * SHAPES.length)]; }
+function randomFruit() { return FRUITS[Math.floor(Math.random() * FRUITS.length)]; }
+function makePiece() { return { id: Math.random().toString(36).slice(2), shape: randomShape(), fruit: randomFruit() }; }
+function shapeBounds(shape) {
+  const rows = Math.max(...shape.map((c) => c[0])) + 1;
+  const cols = Math.max(...shape.map((c) => c[1])) + 1;
+  return { rows, cols };
+}
+function canPlace(shape, row, col, board) {
+  for (const [dr, dc] of shape) {
+    const r = row + dr, c = col + dc;
+    if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return false;
+    if (board[r * SIZE + c]) return false;
+  }
+  return true;
+}
+function canPlaceAnywhere(shape, board) {
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (canPlace(shape, r, c, board)) return true;
+  return false;
+}
+function shade(hex, pct) {
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) + pct, g = ((n >> 8) & 0xff) + pct, b = (n & 0xff) + pct;
+  r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+  return "#" + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
+}
+function gemStyle(hex) {
+  return {
+    background: `linear-gradient(150deg, ${shade(hex, 55)} 0%, ${hex} 45%, ${shade(hex, -30)} 100%)`,
+    boxShadow: `inset 0 2px 0 rgba(255,255,255,0.55), inset 0 -4px 5px rgba(0,0,0,0.32), 0 2px 2px rgba(0,0,0,0.25)`,
+  };
+}
+function newMission(level) {
+  const target = Math.min(8 + Math.floor(level * 1.4), 22);
+  return { fruit: randomFruit(), target, progress: 0 };
+}
+const TIER_LABELS = { 1: "Good!", 2: "Great!", 3: "Perfect!", 4: "Unbelievable!" };
+
+/* ---------- 로컬 저장 (개인 최고기록) ---------- */
+function loadLocalProgress() {
+  try {
+    const raw = localStorage.getItem("fruit-block-progress");
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return { best: 0, bestLevel: 1 };
+}
+function saveLocalProgress(p) {
+  try { localStorage.setItem("fruit-block-progress", JSON.stringify(p)); } catch (e) {}
+}
+function getNickname() {
+  let n = "";
+  try { n = localStorage.getItem("fruit-block-nickname") || ""; } catch (e) {}
+  if (!n) {
+    n = (window.prompt("랭킹에 표시할 닉네임을 입력해주세요 (8자 이내)", "") || "익명").slice(0, 8) || "익명";
+    try { localStorage.setItem("fruit-block-nickname", n); } catch (e) {}
+  }
+  return n;
+}
+
+function FruitBlockBlast() {
+  const [screen, setScreen] = useState("intro");
+  const [board, setBoard] = useState(Array(SIZE * SIZE).fill(null));
+  const [tray, setTray] = useState([makePiece(), makePiece(), makePiece()]);
+  const [score, setScore] = useState(0);
+  const [level, setLevel] = useState(1);
+  const [progress, setProgress] = useState({ best: 0, bestLevel: 1 });
+  const [mission, setMission] = useState(() => newMission(1));
+  const [gameOver, setGameOver] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [clearing, setClearing] = useState([]);
+  const [streak, setStreak] = useState(0);
+  const [popup, setPopup] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [howToOpen, setHowToOpen] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [rankingOpen, setRankingOpen] = useState(false);
+  const [rankingList, setRankingList] = useState([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const boardRef = useRef(null);
+  const busy = useRef(false);
+  const audioCtxRef = useRef(null);
+  const soundOnRef = useRef(true);
+  soundOnRef.current = soundOn;
+  const levelRef = useRef(1);
+  useEffect(() => { levelRef.current = level; }, [level]);
+
+  useEffect(() => { setProgress(loadLocalProgress()); }, []);
+
+  const saveProgress = useCallback((p) => { saveLocalProgress(p); }, []);
+
+  /* 게임 종료 시 랭킹 서버로 점수 제출 */
+  useEffect(() => {
+    if (gameOver && score > 0 && !submitted) {
+      setSubmitted(true);
+      try {
+        const nickname = getNickname();
+        db.collection(SCORES_COLLECTION).add({
+          nickname, score, level,
+          ts: firebase.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+    if (!gameOver) setSubmitted(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver]);
+
+  function openRanking() {
+    setRankingOpen(true);
+    setMenuOpen(false);
+    setRankingLoading(true);
+    db.collection(SCORES_COLLECTION).orderBy("score", "desc").limit(20).get()
+      .then((snap) => {
+        const list = [];
+        snap.forEach((doc) => list.push(doc.data()));
+        setRankingList(list);
+        setRankingLoading(false);
+      })
+      .catch(() => setRankingLoading(false));
+  }
+
+  /* ---------- 사운드 ---------- */
+  function getCtx() {
+    if (!audioCtxRef.current) {
+      try { audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    }
+    return audioCtxRef.current;
+  }
+  function tone(freq, duration, type, gainVal, delay) {
+    if (!soundOnRef.current) return;
+    const ctx = getCtx(); if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(gainVal || 0.12, t0 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + duration + 0.03);
+  }
+  function playPick() {
+    if (!soundOnRef.current) return;
+    const ctx = getCtx(); if (!ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(320, t0);
+    osc.frequency.exponentialRampToValueAtTime(880, t0 + 0.12);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.1, t0 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + 0.16);
+  }
+  function playPlace() {
+    if (!soundOnRef.current) return;
+    const ctx = getCtx(); if (!ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(190, t0);
+    osc.frequency.exponentialRampToValueAtTime(85, t0 + 0.08);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.22, t0 + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + 0.1);
+  }
+  function playClear(tier) {
+    const freqs = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+    const count = Math.min(tier + 1, 5);
+    for (let i = 0; i < count; i++) tone(freqs[i] || freqs[freqs.length - 1], 0.35, "triangle", 0.13, i * 0.06);
+  }
+  function playMission() {
+    tone(784, 0.12, "sine", 0.14, 0);
+    tone(988, 0.12, "sine", 0.14, 0.1);
+    tone(1318, 0.25, "sine", 0.14, 0.2);
+  }
+
+  const updatePointer = useCallback((clientX, clientY) => {
+    setDrag((d) => {
+      if (!d || !boardRef.current) return d;
+      const rect = boardRef.current.getBoundingClientRect();
+      const { rows, cols } = shapeBounds(d.shape);
+      const px = clientX - rect.left - (cols * STEP) / 2;
+      const py = clientY - LIFT - rect.top - (rows * STEP) / 2;
+      const col = Math.round(px / STEP);
+      const row = Math.round(py / STEP);
+      const valid = canPlace(d.shape, row, col, board);
+      return { ...d, x: clientX, y: clientY, row, col, valid };
+    });
+  }, [board]);
+
+  useEffect(() => {
+    if (!drag) return;
+    const move = (e) => { const t = e.touches ? e.touches[0] : e; updatePointer(t.clientX, t.clientY); };
+    const up = () => finishDrag();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag, board]);
+
+  function startDrag(trayIdx, e) {
+    if (gameOver || busy.current) return;
+    const piece = tray[trayIdx];
+    if (!piece) return;
+    const t = e.touches ? e.touches[0] : e;
+    playPick();
+    setDrag({ trayIdx, shape: piece.shape, fruit: piece.fruit, x: t.clientX, y: t.clientY, row: -99, col: -99, valid: false });
+  }
+  function finishDrag() {
+    setDrag((d) => { if (d && d.valid) place(d.trayIdx, d.shape, d.fruit, d.row, d.col); return null; });
+  }
+  function showPopup(label, points) {
+    setPopup({ label, points, id: Math.random() });
+    setTimeout(() => setPopup(null), 900);
+  }
+
+  function place(trayIdx, shape, fruit, row, col) {
+    busy.current = true;
+    playPlace();
+    const nb = board.slice();
+    for (const [dr, dc] of shape) nb[(row + dr) * SIZE + (col + dc)] = fruit.key;
+
+    const fullRows = []; const fullCols = [];
+    for (let r = 0; r < SIZE; r++) { let full = true; for (let c = 0; c < SIZE; c++) if (!nb[r * SIZE + c]) { full = false; break; } if (full) fullRows.push(r); }
+    for (let c = 0; c < SIZE; c++) { let full = true; for (let r = 0; r < SIZE; r++) if (!nb[r * SIZE + c]) { full = false; break; } if (full) fullCols.push(c); }
+
+    setBoard(nb);
+    const placedScore = shape.length;
+    const newTray = tray.slice();
+    newTray[trayIdx] = null;
+
+    const linesCleared = fullRows.length + fullCols.length;
+    const finish = (finalBoard) => {
+      let refilled = newTray;
+      if (refilled.every((p) => p === null)) refilled = [makePiece(), makePiece(), makePiece()];
+      setTray(refilled);
+      const stillAlive = refilled.some((p) => p && canPlaceAnywhere(p.shape, finalBoard));
+      if (!stillAlive) setGameOver(true);
+      busy.current = false;
+    };
+
+    if (linesCleared > 0) {
+      const cellsToClear = new Set();
+      fullRows.forEach((r) => { for (let c = 0; c < SIZE; c++) cellsToClear.add(r * SIZE + c); });
+      fullCols.forEach((c) => { for (let r = 0; r < SIZE; r++) cellsToClear.add(r * SIZE + c); });
+      setClearing(Array.from(cellsToClear));
+
+      const nextStreak = streak + 1;
+      setStreak(nextStreak);
+
+      const combBonus = linesCleared > 1 ? (linesCleared - 1) * 6 : 0;
+      const gained = placedScore + linesCleared * 12 + combBonus;
+      const label = nextStreak > 1 ? `${nextStreak} Combo!` : (TIER_LABELS[Math.min(linesCleared, 4)] || "Good!");
+      playClear(linesCleared);
+      showPopup(label, gained);
+
+      let missionFruitCount = 0;
+      cellsToClear.forEach((i) => { if (nb[i] === mission.fruit.key) missionFruitCount++; });
+
+      setScore((s) => {
+        const ns = s + gained;
+        setProgress((p) => {
+          if (ns > p.best) { const np = { ...p, best: ns }; saveProgress(np); return np; }
+          return p;
+        });
+        return ns;
+      });
+
+      setTimeout(() => {
+        const cb = nb.slice();
+        cellsToClear.forEach((i) => (cb[i] = null));
+        setBoard(cb);
+        setClearing([]);
+        if (missionFruitCount > 0) {
+          setMission((m) => {
+            const p2 = Math.min(m.target, m.progress + missionFruitCount);
+            if (p2 >= m.target) {
+              playMission();
+              const nl = levelRef.current + 1;
+              setLevel(nl);
+              setProgress((pr) => {
+                if (nl > pr.bestLevel) { const np = { ...pr, bestLevel: nl }; saveProgress(np); return np; }
+                return pr;
+              });
+              showPopup("LEVEL UP!", 0);
+              return newMission(nl);
+            }
+            return { ...m, progress: p2 };
+          });
+        }
+        finish(cb);
+      }, 260);
+    } else {
+      setStreak(0);
+      setScore((s) => {
+        const ns = s + placedScore;
+        setProgress((p) => {
+          if (ns > p.best) { const np = { ...p, best: ns }; saveProgress(np); return np; }
+          return p;
+        });
+        return ns;
+      });
+      finish(nb);
+    }
+  }
+
+  function startFirstGame() {
+    setLevel(1); setMission(newMission(1));
+    setBoard(Array(SIZE * SIZE).fill(null));
+    setTray([makePiece(), makePiece(), makePiece()]);
+    setScore(0); setGameOver(false); setStreak(0); setDrag(null);
+    busy.current = false;
+    setScreen("playing");
+  }
+  function restartGame() {
+    setLevel(1); setMission(newMission(1));
+    setBoard(Array(SIZE * SIZE).fill(null));
+    setTray([makePiece(), makePiece(), makePiece()]);
+    setScore(0); setGameOver(false); setStreak(0); setDrag(null);
+    busy.current = false;
+  }
+
+  const previewCells = new Set();
+  if (drag && drag.valid) for (const [dr, dc] of drag.shape) previewCells.add((drag.row + dr) * SIZE + (drag.col + dc));
+
+  const RankingModal = () => (
+    <div style={styles.overlay} onClick={() => setRankingOpen(false)}>
+      <div style={styles.overlayCard} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.overlayBadge}>🏆</div>
+        <div style={styles.overlayTitle}>실시간 랭킹 TOP 20</div>
+        <div style={styles.rankingList}>
+          {rankingLoading && <div style={styles.rankingRow}>불러오는 중…</div>}
+          {!rankingLoading && rankingList.length === 0 && <div style={styles.rankingRow}>아직 기록이 없어요</div>}
+          {!rankingLoading && rankingList.map((r, i) => (
+            <div key={i} style={styles.rankingRow}>
+              <span style={styles.rankingRank}>{i + 1}</span>
+              <span style={styles.rankingName}>{r.nickname || "익명"}</span>
+              <span style={styles.rankingScore}>{r.score}</span>
+            </div>
+          ))}
+        </div>
+        <button style={styles.button} onClick={() => setRankingOpen(false)}>닫기</button>
+      </div>
+    </div>
+  );
+
+  if (screen === "intro") {
+    return (
+      <div style={styles.page}>
+        <div style={styles.introWrap}>
+          <div style={styles.eyebrow}>성령의 9가지 열매</div>
+          <h1 style={styles.title}>
+            <span style={styles.titleWord1}>열매</span>{" "}
+            <span style={styles.titleWord2}>블록</span>
+          </h1>
+          <div style={styles.introFruitRow}>
+            {FRUITS.map((f) => (
+              <div key={f.key} style={{ ...styles.introFruitChip, ...gemStyle(f.color) }}>
+                <span style={{ fontSize: 15 }}>{f.icon}</span>
+              </div>
+            ))}
+          </div>
+          <div style={styles.verseBold}>
+            "오직 성령의 열매는 사랑과 희락과 화평과 오래 참음과<br />
+            자비와 양선과 충성과 온유와 절제니" — 갈라디아서 5:22-23
+          </div>
+          <button style={styles.bigButton} onClick={startFirstGame}>게임 시작</button>
+          <div style={{ marginTop: 14 }}>
+            <button style={styles.rankLinkBtn} onClick={openRanking}>🏆 랭킹 보기</button>
+          </div>
+          <div style={styles.copyright}>ⓒ2026 Barista of Soul. All Rights Reserved. 무단 복제 및 배포를 금합니다.</div>
+        </div>
+        {rankingOpen && <RankingModal />}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.wrap}>
+        <div style={styles.topBar}>
+          <button style={styles.menuBtn} onClick={() => setMenuOpen((v) => !v)}>☰</button>
+          <div style={styles.levelBadge}>LEVEL {level} <span style={styles.levelBest}>(최고 {progress.bestLevel})</span></div>
+        </div>
+
+        {menuOpen && (
+          <div style={styles.menuPanel}>
+            <div style={styles.menuItem} onClick={() => setSoundOn((v) => !v)}>{soundOn ? "🔊 사운드 끄기" : "🔇 사운드 켜기"}</div>
+            <div style={styles.menuItem} onClick={openRanking}>🏆 랭킹 보기</div>
+            <div style={styles.menuItem} onClick={() => { setHowToOpen(true); setMenuOpen(false); }}>📖 게임 사용설명서</div>
+            <div style={styles.menuItem} onClick={() => window.open(SUDOKU_URL, "_blank")}>🍇 열매 스도쿠 하러가기</div>
+          </div>
+        )}
+
+        <div style={styles.titleBlock}>
+          <div style={styles.eyebrow}>성령의 9가지 열매</div>
+          <h1 style={styles.title}>
+            <span style={styles.titleWord1}>열매</span>{" "}
+            <span style={styles.titleWord2}>블록</span>
+          </h1>
+        </div>
+
+        <div style={styles.scores}>
+          <div style={styles.scoreBox}><div style={styles.scoreLabel}>SCORE</div><div style={styles.scoreVal}>{score}</div></div>
+          <div style={styles.scoreDivider} />
+          <div style={styles.scoreBox}><div style={styles.scoreLabel}>BEST</div><div style={styles.scoreVal}>{progress.best}</div></div>
+        </div>
+
+        <div style={styles.missionBar}>
+          <div style={{ ...styles.missionIcon, ...gemStyle(mission.fruit.color) }}>{mission.fruit.icon}</div>
+          <div style={styles.missionTextWrap}>
+            <div style={styles.missionLabel}>미션 · {mission.fruit.name} 모으기</div>
+            <div style={styles.missionBarTrack}>
+              <div style={{ ...styles.missionBarFill, width: `${Math.min(100, (mission.progress / mission.target) * 100)}%` }} />
+            </div>
+          </div>
+          <div style={styles.missionCount}>{mission.progress}/{mission.target}</div>
+        </div>
+
+        <div style={styles.boardOuter}>
+          <div ref={boardRef} style={styles.board}>
+            {board.map((val, i) => {
+              const fruit = val ? FRUITS.find((f) => f.key === val) : null;
+              const isPreview = previewCells.has(i);
+              const isClearing = clearing.includes(i);
+              return (
+                <div key={i} style={{
+                  ...styles.cell,
+                  ...(fruit ? gemStyle(fruit.color) : styles.emptyCell),
+                  ...(isPreview && !fruit ? { background: "rgba(120,210,150,0.35)", boxShadow: "inset 0 0 0 2px rgba(120,220,150,0.85)" } : {}),
+                  transform: isClearing ? "scale(0.3)" : "scale(1)",
+                  opacity: isClearing ? 0 : 1,
+                }}>
+                  {fruit ? <span style={styles.cellIcon}>{fruit.icon}</span> : null}
+                </div>
+              );
+            })}
+          </div>
+          {popup && (
+            <div key={popup.id} style={styles.popup}>
+              <div style={styles.popupLabel}>{popup.label}</div>
+              {popup.points > 0 && <div style={styles.popupScore}>+{popup.points}</div>}
+            </div>
+          )}
+        </div>
+
+        <div style={styles.tray}>
+          {tray.map((piece, idx) => {
+            if (!piece) return <div key={idx} style={styles.traySlot} />;
+            const { rows, cols } = shapeBounds(piece.shape);
+            const beingDragged = drag && drag.trayIdx === idx;
+            return (
+              <div key={piece.id} style={{ ...styles.traySlot, opacity: beingDragged ? 0.2 : 1 }}
+                onPointerDown={(e) => startDrag(idx, e)} onTouchStart={(e) => startDrag(idx, e)}>
+                <div style={{ position: "relative", width: cols * 21, height: rows * 21 }}>
+                  {piece.shape.map(([r, c], k) => (
+                    <div key={k} style={{ position: "absolute", left: c * 21, top: r * 21, width: 18, height: 18, borderRadius: 5, ...gemStyle(piece.fruit.color) }} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={styles.verseBold}>
+          "오직 성령의 열매는 사랑과 희락과 화평과 오래 참음과<br />
+          자비와 양선과 충성과 온유와 절제니" — 갈라디아서 5:22-23
+        </div>
+        <div style={styles.copyright}>ⓒ2026 Barista of Soul. All Rights Reserved. 무단 복제 및 배포를 금합니다.</div>
+
+        {howToOpen && (
+          <div style={styles.overlay} onClick={() => setHowToOpen(false)}>
+            <div style={styles.overlayCard} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.overlayTitle}>게임 사용설명서</div>
+              <div style={styles.howToText}>
+                • 아래 블록을 손가락으로 끌어 보드 위에 놓아요.<br />
+                • 가로 또는 세로 한 줄을 가득 채우면 줄이 사라지고 점수를 얻어요.<br />
+                • 여러 줄을 한 번에 없애면 콤보 점수가 붙어요.<br />
+                • 상단 미션에 표시된 열매를 목표 개수만큼 없애면 레벨업!<br />
+                • 더 이상 블록을 놓을 곳이 없으면 게임이 끝나요.
+              </div>
+              <button style={styles.button} onClick={() => setHowToOpen(false)}>확인</button>
+            </div>
+          </div>
+        )}
+
+        {gameOver && (
+          <div style={styles.overlay}>
+            <div style={styles.overlayCard}>
+              <div style={styles.overlayBadge}>🏆</div>
+              <div style={styles.overlayTitle}>게임 종료 · LEVEL {level}</div>
+              <div style={styles.overlayScore}>{score}점</div>
+              {score >= progress.best && score > 0 && <div style={styles.overlayBest}>🎉 최고 기록 갱신!</div>}
+              <button style={styles.button} onClick={restartGame}>다시 시작</button>
+              <div style={{ marginTop: 10 }}>
+                <button style={styles.rankLinkBtn} onClick={openRanking}>🏆 랭킹 보기</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {rankingOpen && <RankingModal />}
+      </div>
+
+      {drag && (
+        <div style={{ position: "fixed", left: drag.x - (shapeBounds(drag.shape).cols * STEP) / 2, top: drag.y - LIFT - (shapeBounds(drag.shape).rows * STEP) / 2, pointerEvents: "none", zIndex: 50 }}>
+          {drag.shape.map(([r, c], k) => (
+            <div key={k} style={{
+              position: "absolute", left: c * STEP, top: r * STEP, width: CELL, height: CELL, borderRadius: 8,
+              ...gemStyle(drag.fruit.color),
+              boxShadow: `${gemStyle(drag.fruit.color).boxShadow}, 0 8px 16px rgba(0,0,0,0.3)`,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
+            }}>{drag.fruit.icon}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const styles = {
+  page: { minHeight: "100vh", background: "linear-gradient(180deg, #33447A 0%, #1C2647 55%, #141B33 100%)", display: "flex", justifyContent: "center", padding: "26px 14px 40px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif", userSelect: "none", position: "relative" },
+  wrap: { width: "fit-content", maxWidth: "100%", position: "relative" },
+  introWrap: { width: "fit-content", maxWidth: "100%", textAlign: "center", paddingTop: 40 },
+  topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, width: SIZE * STEP },
+  menuBtn: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.16)", color: "#fff", fontSize: 16, borderRadius: 10, width: 36, height: 32, cursor: "pointer" },
+  levelBadge: { background: "rgba(255,214,102,0.15)", border: "1px solid rgba(255,214,102,0.4)", color: "#FFD666", fontSize: 12, fontWeight: 800, letterSpacing: 1, padding: "6px 12px", borderRadius: 10 },
+  levelBest: { color: "#B9C4EA", fontSize: 10, fontWeight: 700, letterSpacing: 0 },
+  menuPanel: { position: "absolute", top: 44, left: 0, zIndex: 40, background: "linear-gradient(160deg, #2B3A66, #1C2647)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 14, padding: 6, boxShadow: "0 10px 24px rgba(0,0,0,0.4)", minWidth: 190 },
+  menuItem: { padding: "10px 12px", color: "#E7ECFA", fontSize: 13, fontWeight: 600, borderRadius: 9, cursor: "pointer" },
+  titleBlock: { textAlign: "center", marginBottom: 12 },
+  eyebrow: { fontSize: 13, letterSpacing: 1, color: "#FFD666", fontWeight: 800, marginBottom: 4, textShadow: "0 1px 3px rgba(0,0,0,0.35)" },
+  title: { fontSize: 34, margin: 0, fontWeight: 900, letterSpacing: -0.5, lineHeight: 1 },
+  titleWord1: { color: "#FFD666", textShadow: "0 2px 0 #C98A1B, 0 4px 0 #A6690E, 0 6px 10px rgba(0,0,0,0.4)" },
+  titleWord2: { color: "#7FE3D6", textShadow: "0 2px 0 #1F9E8C, 0 4px 0 #147065, 0 6px 10px rgba(0,0,0,0.4)" },
+  introFruitRow: { display: "flex", justifyContent: "center", flexWrap: "wrap", gap: 8, margin: "20px 0", maxWidth: 320 },
+  introFruitChip: { width: 34, height: 34, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" },
+  scores: { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 16, padding: "8px 18px", marginBottom: 10, width: "fit-content", marginLeft: "auto", marginRight: "auto" },
+  scoreDivider: { width: 1, height: 26, background: "rgba(255,255,255,0.18)" },
+  scoreBox: { textAlign: "center", minWidth: 64 },
+  scoreLabel: { fontSize: 9.5, color: "#9FB0DE", letterSpacing: 1.5, fontWeight: 800 },
+  scoreVal: { fontSize: 20, color: "#fff", fontWeight: 800, lineHeight: 1.4 },
+  missionBar: { display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: "8px 12px", marginBottom: 14, width: SIZE * STEP, boxSizing: "border-box" },
+  missionIcon: { width: 30, height: 30, minWidth: 30, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 },
+  missionTextWrap: { flex: 1 },
+  missionLabel: { fontSize: 10.5, color: "#B9C4EA", fontWeight: 700, marginBottom: 4 },
+  missionBarTrack: { height: 6, borderRadius: 4, background: "rgba(255,255,255,0.12)", overflow: "hidden" },
+  missionBarFill: { height: "100%", background: "linear-gradient(90deg, #FFD666, #E6A62E)", borderRadius: 4, transition: "width 300ms ease" },
+  missionCount: { fontSize: 12, color: "#fff", fontWeight: 800, minWidth: 40, textAlign: "right" },
+  boardOuter: { position: "relative", background: "linear-gradient(160deg, #2B3A66 0%, #1E2A4E 100%)", borderRadius: 20, padding: 10, boxShadow: "0 14px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)", width: "fit-content" },
+  board: { boxSizing: "content-box", display: "grid", gridTemplateColumns: `repeat(${SIZE}, ${CELL}px)`, gridTemplateRows: `repeat(${SIZE}, ${CELL}px)`, gap: GAP, background: "#141C36", padding: 8, borderRadius: 14, width: "fit-content" },
+  cell: { borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, transition: "transform 220ms ease, opacity 220ms ease, background 120ms ease" },
+  emptyCell: { background: "#202B4C", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.04)" },
+  cellIcon: { filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" },
+  popup: { position: "absolute", top: "38%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", pointerEvents: "none", zIndex: 30 },
+  popupLabel: { fontSize: 26, fontWeight: 900, color: "#FFD666", textShadow: "0 3px 10px rgba(0,0,0,0.5)" },
+  popupScore: { fontSize: 15, fontWeight: 800, color: "#7FE3D6", marginTop: 2, textShadow: "0 2px 6px rgba(0,0,0,0.5)" },
+  tray: { display: "flex", justifyContent: "space-around", marginTop: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "14px 6px" },
+  traySlot: { width: 92, height: 66, display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" },
+  verseBold: { marginTop: 18, fontSize: 13.5, color: "#D9E0F5", textAlign: "center", lineHeight: 1.7, fontWeight: 700 },
+  copyright: { marginTop: 14, fontSize: 10, color: "#6C7BAE", textAlign: "center", lineHeight: 1.6 },
+  bigButton: { marginTop: 26, background: "linear-gradient(160deg, #FFD666, #E6A62E)", color: "#4A2E00", border: "none", borderRadius: 14, padding: "14px 44px", fontSize: 17, fontWeight: 900, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5), 0 6px 16px rgba(0,0,0,0.3)" },
+  rankLinkBtn: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.18)", color: "#7FE3D6", borderRadius: 10, padding: "8px 18px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" },
+  overlay: { position: "fixed", inset: 0, background: "rgba(10,14,30,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60 },
+  overlayCard: { background: "linear-gradient(160deg, #2B3A66 0%, #1C2647 100%)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20, padding: "30px 34px", textAlign: "center", minWidth: 240, maxWidth: 300, boxShadow: "0 20px 40px rgba(0,0,0,0.4)" },
+  overlayBadge: { fontSize: 40, marginBottom: 6 },
+  overlayTitle: { fontSize: 14, color: "#9FB0DE", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" },
+  overlayScore: { fontSize: 36, fontWeight: 900, color: "#FFD666", margin: "6px 0" },
+  overlayBest: { color: "#7FE3D6", fontWeight: 700, marginBottom: 10, fontSize: 13 },
+  howToText: { fontSize: 12.5, color: "#D9E0F5", lineHeight: 1.9, textAlign: "left", margin: "14px 0" },
+  rankingList: { margin: "12px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" },
+  rankingRow: { display: "flex", alignItems: "center", gap: 10, padding: "6px 4px", borderBottom: "1px solid rgba(255,255,255,0.08)", fontSize: 13, color: "#E7ECFA" },
+  rankingRank: { width: 20, fontWeight: 800, color: "#FFD666" },
+  rankingName: { flex: 1, fontWeight: 600 },
+  rankingScore: { fontWeight: 800, color: "#7FE3D6" },
+  button: { marginTop: 10, background: "linear-gradient(160deg, #FFD666, #E6A62E)", color: "#4A2E00", border: "none", borderRadius: 12, padding: "12px 28px", fontSize: 15, fontWeight: 800, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5), 0 4px 10px rgba(0,0,0,0.25)" },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<FruitBlockBlast />);
+</script>
+</body>
+</html>
