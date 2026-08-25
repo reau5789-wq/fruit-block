@@ -138,17 +138,20 @@ function loadLocalProgress() {
 function saveLocalProgress(p) {
   try { localStorage.setItem("fruit-block-progress", JSON.stringify(p)); } catch (e) {}
 }
-function getNickname() {
-  let n = "";
-  try { n = localStorage.getItem("fruit-block-nickname") || ""; } catch (e) {}
-  if (!n) {
-    n = (window.prompt("랭킹에 표시할 닉네임을 입력해주세요 (8자 이내)", "") || "익명").slice(0, 8) || "익명";
-    try { localStorage.setItem("fruit-block-nickname", n); } catch (e) {}
-  }
-  return n;
-}
 function getStoredNickname() {
   try { return localStorage.getItem("fruit-block-nickname") || ""; } catch (e) { return ""; }
+}
+function saveNickname(n) {
+  try { localStorage.setItem("fruit-block-nickname", n); } catch (e) {}
+}
+function submitScore(nickname, score, level, cbRank) {
+  try {
+    db.collection(SCORES_COLLECTION).add({
+      nickname, score, level,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
+    fetchRank(score, cbRank);
+  } catch (e) {}
 }
 function fetchRank(score, cb) {
   db.collection(SCORES_COLLECTION).where("score", ">", score).get()
@@ -178,7 +181,11 @@ function FruitBlockBlast() {
   const [submitted, setSubmitted] = useState(false);
   const [rank, setRank] = useState(null);
   const [introRank, setIntroRank] = useState(null);
-  const introNickname = getStoredNickname();
+  const [nickname, setNickname] = useState(() => getStoredNickname());
+  const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+  const introNickname = nickname;
+  const pendingSubmitRef = useRef(null);
   const boardRef = useRef(null);
   const busy = useRef(false);
   const audioCtxRef = useRef(null);
@@ -191,18 +198,35 @@ function FruitBlockBlast() {
 
   const saveProgress = useCallback((p) => { saveLocalProgress(p); }, []);
 
-  /* 게임 종료 시 랭킹 서버로 점수 제출 */
+  function openNicknameModal() {
+    setNicknameDraft(nickname || "");
+    setMenuOpen(false);
+    setNicknameModalOpen(true);
+  }
+  function confirmNickname() {
+    const n = (nicknameDraft || "").trim().slice(0, 8) || "익명";
+    saveNickname(n);
+    setNickname(n);
+    setNicknameModalOpen(false);
+    if (pendingSubmitRef.current) {
+      const { score: s, level: l } = pendingSubmitRef.current;
+      pendingSubmitRef.current = null;
+      setSubmitted(true);
+      submitScore(n, s, l, setRank);
+    }
+  }
+
+  /* 게임 종료 시 랭킹 서버로 점수 제출 (닉네임이 없으면 먼저 입력받음) */
   useEffect(() => {
     if (gameOver && score > 0 && !submitted) {
-      setSubmitted(true);
-      try {
-        const nickname = getNickname();
-        db.collection(SCORES_COLLECTION).add({
-          nickname, score, level,
-          ts: firebase.firestore.FieldValue.serverTimestamp(),
-        }).catch(() => {});
-        fetchRank(score, setRank);
-      } catch (e) {}
+      if (!nickname) {
+        pendingSubmitRef.current = { score, level };
+        setNicknameDraft("");
+        setNicknameModalOpen(true);
+      } else {
+        setSubmitted(true);
+        submitScore(nickname, score, level, setRank);
+      }
     }
     if (!gameOver) { setSubmitted(false); setRank(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -462,6 +486,25 @@ function FruitBlockBlast() {
     </div>
   );
 
+  const NicknameModal = () => (
+    <div style={styles.overlay}>
+      <div style={styles.overlayCard} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.overlayBadge}>✏️</div>
+        <div style={styles.overlayTitle}>닉네임 입력</div>
+        <div style={styles.howToText}>랭킹에 표시될 이름이에요. 8자 이내로 입력해주세요.</div>
+        <input
+          type="text"
+          value={nicknameDraft}
+          onChange={(e) => setNicknameDraft(e.target.value.slice(0, 8))}
+          placeholder="예: 유정무"
+          style={styles.nicknameInput}
+          autoFocus
+        />
+        <button style={styles.button} onClick={confirmNickname}>확인</button>
+      </div>
+    </div>
+  );
+
   if (screen === "intro") {
     return (
       <div style={styles.page}>
@@ -471,6 +514,7 @@ function FruitBlockBlast() {
           </div>
           {menuOpen && (
             <div style={styles.menuPanelIntro}>
+              <div style={styles.menuItem} onClick={openNicknameModal}>✏️ 닉네임 {nickname ? `변경 (${nickname})` : "설정"}</div>
               <div style={styles.menuItem} onClick={() => setSoundOn((v) => !v)}>{soundOn ? "🔊 사운드 끄기" : "🔇 사운드 켜기"}</div>
               <div style={styles.menuItem} onClick={openRanking}>🏆 랭킹 보기</div>
               <div style={styles.menuItem} onClick={() => { setHowToOpen(true); setMenuOpen(false); }}>📖 게임 사용설명서</div>
@@ -523,6 +567,7 @@ function FruitBlockBlast() {
           </div>
         )}
         {rankingOpen && <RankingModal />}
+        {nicknameModalOpen && <NicknameModal />}
       </div>
     );
   }
@@ -537,6 +582,7 @@ function FruitBlockBlast() {
 
         {menuOpen && (
           <div style={styles.menuPanel}>
+            <div style={styles.menuItem} onClick={openNicknameModal}>✏️ 닉네임 {nickname ? `변경 (${nickname})` : "설정"}</div>
             <div style={styles.menuItem} onClick={() => setSoundOn((v) => !v)}>{soundOn ? "🔊 사운드 끄기" : "🔇 사운드 켜기"}</div>
             <div style={styles.menuItem} onClick={openRanking}>🏆 랭킹 보기</div>
             <div style={styles.menuItem} onClick={() => { setHowToOpen(true); setMenuOpen(false); }}>📖 게임 사용설명서</div>
@@ -653,6 +699,7 @@ function FruitBlockBlast() {
         )}
 
         {rankingOpen && <RankingModal />}
+        {nicknameModalOpen && <NicknameModal />}
       </div>
 
       {drag && (
@@ -734,6 +781,11 @@ const styles = {
   overlayRank: { color: "#B9C4EA", fontWeight: 700, fontSize: 12.5, marginBottom: 6 },
   overlayBest: { color: "#7FE3D6", fontWeight: 700, marginBottom: 10, fontSize: 13 },
   howToText: { fontSize: 12.5, color: "#D9E0F5", lineHeight: 1.9, textAlign: "left", margin: "14px 0" },
+  nicknameInput: {
+    width: "100%", boxSizing: "border-box", padding: "12px 14px", fontSize: 15,
+    borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)",
+    color: "#fff", marginBottom: 6, outline: "none",
+  },
   rankingList: { margin: "12px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" },
   rankingRow: { display: "flex", alignItems: "center", gap: 10, padding: "6px 4px", borderBottom: "1px solid rgba(255,255,255,0.08)", fontSize: 13, color: "#E7ECFA" },
   rankingRank: { width: 20, fontWeight: 800, color: "#FFD666" },
