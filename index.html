@@ -27,14 +27,16 @@
 <div id="root"></div>
 
 <script>
+  /* ▼▼▼ 여기에 본인 Firebase 프로젝트 설정값을 넣어주세요 (Firebase 콘솔 > 프로젝트 설정 > 웹앱) ▼▼▼ */
   const firebaseConfig = {
-    apiKey: "AIzaSyCWig7QuvDLT-rs6kADcEAmjRXUH0if5Fo",
-    authDomain: "fruit-block-ranking.firebaseapp.com",
-    projectId: "fruit-block-ranking",
-    storageBucket: "fruit-block-ranking.firebasestorage.app",
-    messagingSenderId: "713885192344",
-    appId: "1:713885192344:web:eaae02e1bd1a18c1aac0ed",
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID",
   };
+  /* ▲▲▲ ------------------------------------------------------------- ▲▲▲ */
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
 </script>
@@ -145,6 +147,14 @@ function getNickname() {
   }
   return n;
 }
+function getStoredNickname() {
+  try { return localStorage.getItem("fruit-block-nickname") || ""; } catch (e) { return ""; }
+}
+function fetchRank(score, cb) {
+  db.collection(SCORES_COLLECTION).where("score", ">", score).get()
+    .then((snap) => cb(snap.size + 1))
+    .catch(() => cb(null));
+}
 
 function FruitBlockBlast() {
   const [screen, setScreen] = useState("intro");
@@ -166,6 +176,9 @@ function FruitBlockBlast() {
   const [rankingList, setRankingList] = useState([]);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [rank, setRank] = useState(null);
+  const [introRank, setIntroRank] = useState(null);
+  const introNickname = getStoredNickname();
   const boardRef = useRef(null);
   const busy = useRef(false);
   const audioCtxRef = useRef(null);
@@ -188,11 +201,20 @@ function FruitBlockBlast() {
           nickname, score, level,
           ts: firebase.firestore.FieldValue.serverTimestamp(),
         }).catch(() => {});
+        fetchRank(score, setRank);
       } catch (e) {}
     }
-    if (!gameOver) setSubmitted(false);
+    if (!gameOver) { setSubmitted(false); setRank(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameOver]);
+
+  /* 인트로 화면 진입 시 내 최고기록 순위 조회 */
+  useEffect(() => {
+    if (screen === "intro" && progress.best > 0 && introNickname) {
+      fetchRank(progress.best, setIntroRank);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, progress.best]);
 
   function openRanking() {
     setRankingOpen(true);
@@ -444,11 +466,20 @@ function FruitBlockBlast() {
     return (
       <div style={styles.page}>
         <div style={styles.introWrap}>
-          <div style={styles.eyebrow}>성령의 9가지 열매</div>
-          <h1 style={styles.title}>
-            <span style={styles.titleWord1}>열매</span>{" "}
-            <span style={styles.titleWord2}>블록</span>
-          </h1>
+          <div style={styles.introTopBar}>
+            <button style={styles.menuBtn} onClick={() => setMenuOpen((v) => !v)}>☰</button>
+          </div>
+          {menuOpen && (
+            <div style={styles.menuPanelIntro}>
+              <div style={styles.menuItem} onClick={() => setSoundOn((v) => !v)}>{soundOn ? "🔊 사운드 끄기" : "🔇 사운드 켜기"}</div>
+              <div style={styles.menuItem} onClick={openRanking}>🏆 랭킹 보기</div>
+              <div style={styles.menuItem} onClick={() => { setHowToOpen(true); setMenuOpen(false); }}>📖 게임 사용설명서</div>
+              <div style={styles.menuItem} onClick={() => window.open(SUDOKU_URL, "_blank")}>🍇 열매 스도쿠 하러가기</div>
+            </div>
+          )}
+
+          <img src="feature-graphic.png" alt="열매 블록" style={styles.logoImg} />
+
           <div style={styles.introFruitRow}>
             {FRUITS.map((f) => (
               <div key={f.key} style={{ ...styles.introFruitChip, ...gemStyle(f.color) }}>
@@ -460,12 +491,37 @@ function FruitBlockBlast() {
             "오직 성령의 열매는 사랑과 희락과 화평과 오래 참음과<br />
             자비와 양선과 충성과 온유와 절제니" — 갈라디아서 5:22-23
           </div>
+
+          {introNickname && progress.best > 0 && (
+            <div style={styles.myRankBox}>
+              <span style={styles.myRankName}>{introNickname}</span>
+              <span style={styles.myRankDot}>·</span>
+              <span style={styles.myRankScore}>최고 {progress.best}점</span>
+              {introRank && <span style={styles.myRankBadge}>현재 {introRank}위</span>}
+            </div>
+          )}
+
           <button style={styles.bigButton} onClick={startFirstGame}>게임 시작</button>
           <div style={{ marginTop: 14 }}>
-            <button style={styles.rankLinkBtn} onClick={openRanking}>🏆 랭킹 보기</button>
+            <button style={styles.rankLinkBtn} onClick={openRanking}>🏆 전체 랭킹 보기</button>
           </div>
           <div style={styles.copyright}>ⓒ2026 Barista of Soul. All Rights Reserved. 무단 복제 및 배포를 금합니다.</div>
         </div>
+        {howToOpen && (
+          <div style={styles.overlay} onClick={() => setHowToOpen(false)}>
+            <div style={styles.overlayCard} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.overlayTitle}>게임 사용설명서</div>
+              <div style={styles.howToText}>
+                • 아래 블록을 손가락으로 끌어 보드 위에 놓아요.<br />
+                • 가로 또는 세로 한 줄을 가득 채우면 줄이 사라지고 점수를 얻어요.<br />
+                • 여러 줄을 한 번에 없애면 콤보 점수가 붙어요.<br />
+                • 상단 미션에 표시된 열매를 목표 개수만큼 없애면 레벨업!<br />
+                • 더 이상 블록을 놓을 곳이 없으면 게임이 끝나요.
+              </div>
+              <button style={styles.button} onClick={() => setHowToOpen(false)}>확인</button>
+            </div>
+          </div>
+        )}
         {rankingOpen && <RankingModal />}
       </div>
     );
@@ -586,6 +642,7 @@ function FruitBlockBlast() {
               <div style={styles.overlayBadge}>🏆</div>
               <div style={styles.overlayTitle}>게임 종료 · LEVEL {level}</div>
               <div style={styles.overlayScore}>{score}점</div>
+              {rank && <div style={styles.overlayRank}>현재 전체 {rank}위</div>}
               {score >= progress.best && score > 0 && <div style={styles.overlayBest}>🎉 최고 기록 갱신!</div>}
               <button style={styles.button} onClick={restartGame}>다시 시작</button>
               <div style={{ marginTop: 10 }}>
@@ -617,8 +674,20 @@ function FruitBlockBlast() {
 const styles = {
   page: { minHeight: "100vh", background: "linear-gradient(180deg, #33447A 0%, #1C2647 55%, #141B33 100%)", display: "flex", justifyContent: "center", padding: "26px 14px 40px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif", userSelect: "none", position: "relative" },
   wrap: { width: "fit-content", maxWidth: "100%", position: "relative" },
-  introWrap: { width: "fit-content", maxWidth: "100%", textAlign: "center", paddingTop: 40 },
-  topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, width: SIZE * STEP },
+  introWrap: { width: "fit-content", maxWidth: "100%", textAlign: "center", paddingTop: 6, position: "relative" },
+  introTopBar: { display: "flex", justifyContent: "flex-start", marginBottom: 6 },
+  menuPanelIntro: { position: "absolute", top: 44, left: 0, zIndex: 40, background: "linear-gradient(160deg, #2B3A66, #1C2647)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 14, padding: 6, boxShadow: "0 10px 24px rgba(0,0,0,0.4)", minWidth: 190, textAlign: "left" },
+  logoImg: { width: "100%", maxWidth: 340, height: "auto", display: "block", margin: "0 auto 8px", borderRadius: 12 },
+  myRankBox: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap",
+    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: 12, padding: "8px 14px", marginTop: 16, fontSize: 12.5,
+  },
+  myRankName: { color: "#fff", fontWeight: 800 },
+  myRankDot: { color: "#6C7BAE" },
+  myRankScore: { color: "#D9E0F5", fontWeight: 700 },
+  myRankBadge: { background: "rgba(255,214,102,0.18)", color: "#FFD666", fontWeight: 800, padding: "2px 8px", borderRadius: 8 },
+  topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, width: SIZE * STEP, marginLeft: "auto", marginRight: "auto" },
   menuBtn: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.16)", color: "#fff", fontSize: 16, borderRadius: 10, width: 36, height: 32, cursor: "pointer" },
   levelBadge: { background: "rgba(255,214,102,0.15)", border: "1px solid rgba(255,214,102,0.4)", color: "#FFD666", fontSize: 12, fontWeight: 800, letterSpacing: 1, padding: "6px 12px", borderRadius: 10 },
   levelBest: { color: "#B9C4EA", fontSize: 10, fontWeight: 700, letterSpacing: 0 },
@@ -636,7 +705,7 @@ const styles = {
   scoreBox: { textAlign: "center", minWidth: 64 },
   scoreLabel: { fontSize: 9.5, color: "#9FB0DE", letterSpacing: 1.5, fontWeight: 800 },
   scoreVal: { fontSize: 20, color: "#fff", fontWeight: 800, lineHeight: 1.4 },
-  missionBar: { display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: "8px 12px", marginBottom: 14, width: SIZE * STEP, boxSizing: "border-box" },
+  missionBar: { display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: "8px 12px", marginBottom: 14, width: SIZE * STEP, boxSizing: "border-box", marginLeft: "auto", marginRight: "auto" },
   missionIcon: { width: 30, height: 30, minWidth: 30, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 },
   missionTextWrap: { flex: 1 },
   missionLabel: { fontSize: 10.5, color: "#B9C4EA", fontWeight: 700, marginBottom: 4 },
@@ -662,6 +731,7 @@ const styles = {
   overlayBadge: { fontSize: 40, marginBottom: 6 },
   overlayTitle: { fontSize: 14, color: "#9FB0DE", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" },
   overlayScore: { fontSize: 36, fontWeight: 900, color: "#FFD666", margin: "6px 0" },
+  overlayRank: { color: "#B9C4EA", fontWeight: 700, fontSize: 12.5, marginBottom: 6 },
   overlayBest: { color: "#7FE3D6", fontWeight: 700, marginBottom: 10, fontSize: 13 },
   howToText: { fontSize: 12.5, color: "#D9E0F5", lineHeight: 1.9, textAlign: "left", margin: "14px 0" },
   rankingList: { margin: "12px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" },
