@@ -109,6 +109,26 @@ function canPlaceAnywhere(shape, board) {
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (canPlace(shape, r, c, board)) return true;
   return false;
 }
+/* ---------- 회전 아이템 (게임당 3회) ---------- */
+const ROTATE_PER_GAME = 3;
+function rotateShape(shape) {
+  // 시계 방향 90도 회전: (r, c) -> (c, maxRow - r)
+  const { rows } = shapeBounds(shape);
+  const rotated = shape.map(([r, c]) => [c, rows - 1 - r]);
+  const minR = Math.min(...rotated.map((p) => p[0]));
+  const minC = Math.min(...rotated.map((p) => p[1]));
+  return rotated.map(([r, c]) => [r - minR, c - minC]);
+}
+/* 남은 회전 횟수 안에서 회전하면 놓을 수 있는지 확인 */
+function canFitWithRotation(shape, board, charges) {
+  let s = shape;
+  if (canPlaceAnywhere(s, board)) return true;
+  for (let i = 0; i < Math.min(charges, 3); i++) {
+    s = rotateShape(s);
+    if (canPlaceAnywhere(s, board)) return true;
+  }
+  return false;
+}
 function shade(hex, pct) {
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) + pct, g = ((n >> 8) & 0xff) + pct, b = (n & 0xff) + pct;
@@ -193,6 +213,11 @@ function FruitBlockBlast() {
   soundOnRef.current = soundOn;
   const levelRef = useRef(1);
   useEffect(() => { levelRef.current = level; }, [level]);
+  const [rotateLeft, setRotateLeft] = useState(ROTATE_PER_GAME);
+  const [rotateMode, setRotateMode] = useState(false);
+  const rotateLeftRef = useRef(ROTATE_PER_GAME);
+  rotateLeftRef.current = rotateLeft;
+  const lastRotateTs = useRef(0);
 
   useEffect(() => { setProgress(loadLocalProgress()); }, []);
 
@@ -340,8 +365,36 @@ function FruitBlockBlast() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag, board]);
 
+  function playRotate() {
+    tone(660, 0.08, "sine", 0.12, 0);
+    tone(990, 0.12, "sine", 0.12, 0.07);
+  }
+  function rotatePiece(trayIdx) {
+    const now = Date.now();
+    if (now - lastRotateTs.current < 350) return; // 터치+포인터 이벤트 중복 방지
+    lastRotateTs.current = now;
+    if (rotateLeftRef.current <= 0) { setRotateMode(false); return; }
+    const piece = tray[trayIdx];
+    if (!piece) return;
+    const newTray = tray.slice();
+    newTray[trayIdx] = { ...piece, shape: rotateShape(piece.shape) };
+    const left = rotateLeftRef.current - 1;
+    rotateLeftRef.current = left;
+    setRotateLeft(left);
+    setTray(newTray);
+    setRotateMode(false);
+    playRotate();
+    // 회전 후에도 놓을 곳이 전혀 없으면 게임 종료
+    if (!newTray.some((p) => p && canFitWithRotation(p.shape, board, left))) setGameOver(true);
+  }
+  function toggleRotateMode() {
+    if (gameOver || busy.current || rotateLeft <= 0) return;
+    setRotateMode((v) => !v);
+  }
+
   function startDrag(trayIdx, e) {
     if (gameOver || busy.current) return;
+    if (rotateMode) { rotatePiece(trayIdx); return; }
     const piece = tray[trayIdx];
     if (!piece) return;
     const t = e.touches ? e.touches[0] : e;
@@ -377,7 +430,15 @@ function FruitBlockBlast() {
       if (refilled.every((p) => p === null)) refilled = [makePiece(), makePiece(), makePiece()];
       setTray(refilled);
       const stillAlive = refilled.some((p) => p && canPlaceAnywhere(p.shape, finalBoard));
-      if (!stillAlive) setGameOver(true);
+      if (!stillAlive) {
+        const savedByRotation = refilled.some((p) => p && canFitWithRotation(p.shape, finalBoard, rotateLeftRef.current));
+        if (savedByRotation) {
+          setRotateMode(true);
+          setTimeout(() => showPopup("🔄 회전해 보세요!", 0), 300);
+        } else {
+          setGameOver(true);
+        }
+      }
       busy.current = false;
     };
 
@@ -451,6 +512,7 @@ function FruitBlockBlast() {
     setBoard(Array(SIZE * SIZE).fill(null));
     setTray([makePiece(), makePiece(), makePiece()]);
     setScore(0); setGameOver(false); setStreak(0); setDrag(null);
+    setRotateLeft(ROTATE_PER_GAME); rotateLeftRef.current = ROTATE_PER_GAME; setRotateMode(false);
     busy.current = false;
     setScreen("playing");
   }
@@ -459,6 +521,7 @@ function FruitBlockBlast() {
     setBoard(Array(SIZE * SIZE).fill(null));
     setTray([makePiece(), makePiece(), makePiece()]);
     setScore(0); setGameOver(false); setStreak(0); setDrag(null);
+    setRotateLeft(ROTATE_PER_GAME); rotateLeftRef.current = ROTATE_PER_GAME; setRotateMode(false);
     busy.current = false;
   }
 
@@ -560,6 +623,7 @@ function FruitBlockBlast() {
                 • 가로 또는 세로 한 줄을 가득 채우면 줄이 사라지고 점수를 얻어요.<br />
                 • 여러 줄을 한 번에 없애면 콤보 점수가 붙어요.<br />
                 • 상단 미션에 표시된 열매를 목표 개수만큼 없애면 레벨업!<br />
+                • 🔄 회전 버튼을 누른 뒤 블록을 톡 치면 90도 회전해요. (게임당 3회)<br />
                 • 더 이상 블록을 놓을 곳이 없으면 게임이 끝나요.
               </div>
               <button style={styles.button} onClick={() => setHowToOpen(false)}>확인</button>
@@ -642,7 +706,19 @@ function FruitBlockBlast() {
           )}
         </div>
 
-        <div style={styles.tray}>
+        <div style={styles.rotateRow}>
+          <div style={styles.rotateHint}>
+            {rotateMode ? "돌릴 블록을 톡 치세요" : (rotateLeft > 0 ? "막히면 블록을 돌려보세요" : "회전 아이템을 모두 썼어요")}
+          </div>
+          <button
+            style={{ ...styles.rotateBtn, ...(rotateMode ? styles.rotateBtnActive : {}), ...(rotateLeft <= 0 ? styles.rotateBtnDisabled : {}) }}
+            onClick={toggleRotateMode}
+          >
+            🔄 회전 <span style={styles.rotateCount}>{rotateLeft}</span>
+          </button>
+        </div>
+
+        <div style={{ ...styles.tray, ...(rotateMode ? styles.trayRotateMode : {}) }}>
           {tray.map((piece, idx) => {
             if (!piece) return <div key={idx} style={styles.traySlot} />;
             const { rows, cols } = shapeBounds(piece.shape);
@@ -675,6 +751,7 @@ function FruitBlockBlast() {
                 • 가로 또는 세로 한 줄을 가득 채우면 줄이 사라지고 점수를 얻어요.<br />
                 • 여러 줄을 한 번에 없애면 콤보 점수가 붙어요.<br />
                 • 상단 미션에 표시된 열매를 목표 개수만큼 없애면 레벨업!<br />
+                • 🔄 회전 버튼을 누른 뒤 블록을 톡 치면 90도 회전해요. (게임당 3회)<br />
                 • 더 이상 블록을 놓을 곳이 없으면 게임이 끝나요.
               </div>
               <button style={styles.button} onClick={() => setHowToOpen(false)}>확인</button>
@@ -769,6 +846,13 @@ const styles = {
   popupScore: { fontSize: 15, fontWeight: 800, color: "#7FE3D6", marginTop: 2, textShadow: "0 2px 6px rgba(0,0,0,0.5)" },
   tray: { display: "flex", justifyContent: "space-around", marginTop: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "14px 6px" },
   traySlot: { width: 92, height: 66, display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" },
+  trayRotateMode: { border: "1px dashed #7FE3D6", background: "rgba(127,227,214,0.10)", boxShadow: "0 0 14px rgba(127,227,214,0.35)" },
+  rotateRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12 },
+  rotateHint: { fontSize: 11.5, color: "#B9C4EA", fontWeight: 600 },
+  rotateBtn: { background: "rgba(127,227,214,0.12)", border: "1px solid rgba(127,227,214,0.5)", color: "#7FE3D6", borderRadius: 10, padding: "7px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" },
+  rotateBtnActive: { background: "linear-gradient(160deg, #7FE3D6, #2FB6A8)", color: "#0E3B36", border: "1px solid #7FE3D6" },
+  rotateBtnDisabled: { opacity: 0.35, cursor: "default" },
+  rotateCount: { display: "inline-block", minWidth: 18, marginLeft: 4, padding: "0 5px", borderRadius: 8, background: "rgba(0,0,0,0.25)", color: "#fff", fontSize: 11.5 },
   verseBold: { marginTop: 18, fontSize: 13.5, color: "#D9E0F5", textAlign: "center", lineHeight: 1.7, fontWeight: 700 },
   copyright: { marginTop: 14, fontSize: 10, color: "#6C7BAE", textAlign: "center", lineHeight: 1.6 },
   bigButton: { marginTop: 26, background: "linear-gradient(160deg, #FFD666, #E6A62E)", color: "#4A2E00", border: "none", borderRadius: 14, padding: "14px 44px", fontSize: 17, fontWeight: 900, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5), 0 6px 16px rgba(0,0,0,0.3)" },
